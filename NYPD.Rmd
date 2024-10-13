@@ -1,0 +1,175 @@
+---
+title: "NYPD Shooting Analysis"
+author: "Anonymous"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+This report analyzes shooting incidents across New York City's boroughs, focusing on the number of incidents and the time of day they occur. The goal is to identify which boroughs experience the most gun violence and when incidents are most likely to happen. By understanding these patterns, we can highlight areas and time periods where targeted interventions may be most effective in reducing gun violence.
+
+## Load the library
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+# Inport dataset
+```{r read_csv}
+# Read the csv file
+nypd_01 = read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+# Summary of dataset
+head(nypd_01)
+
+```
+
+# Tidy and transform
+
+We clean the data by removing unnecessary columns, transforming date and time columns, and dropping rows with missing values in key columns (such as Age Group, Gender, and Location).
+
+```{r tidy_data}
+# Remove unnecessary columns
+nypd_02 = nypd_01 %>% 
+  select(-c(X_COORD_CD:Lon_Lat, PRECINCT, JURISDICTION_CODE))
+
+# Transform date and time columns
+nypd_02 = nypd_02 %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME))
+
+# Drop rows with missing values in key columns (Age Group, Gender, Location)
+nypd_02 <- nypd_02 %>%
+  filter(!is.na(VIC_AGE_GROUP), !is.na(VIC_SEX), !is.na(LOCATION_DESC))
+
+# Check the cleaned data
+summary(nypd_02)
+
+```
+# Visualization : Shooting incidents by borough
+
+This analysis looks at how shooting incidents are distributed across the different boroughs of New York City: Manhattan, Brooklyn, The Bronx, Queens, and Staten Island. By examining this, we can see which areas have the highest or lowest number of incidents.
+
+Understanding these patterns helps focus efforts on the areas that need the most attention to reduce gun violence. The following bar chart shows the number of shooting incidents in each borough, giving a clear view of where incidents happen most often.
+
+```{r location}
+# Group and summarize incidents by borough
+nypd_02 %>%
+  group_by(BORO) %>%
+  summarize(Incidents = n()) %>%
+  ggplot(aes(x = reorder(BORO, Incidents), y = Incidents, fill = BORO)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Shooting Incidents by Borough",
+    x = "Borough",
+    y = "Number of Incidents"
+  ) +
+  theme_minimal()
+
+```
+
+The bar chart shows that Brooklyn has the highest number of shooting incidents, followed by The Bronx. Manhattan and Queens have moderate levels of incidents, while Staten Island reports the fewest.
+
+This distribution highlights Brooklyn and The Bronx as the primary areas of concern for gun violence in New York City, indicating a need for focused resources and interventions in these boroughs.
+
+# Visualization : Shooting incidents by time of day for each borough
+After analyzing shooting incidents by borough, it's important to see when these incidents happen. By looking at the time of day for each borough, we can identify key periods for gun violence and when prevention efforts may be most effective.
+
+The following graph shows shooting incidents by time of day across each borough, highlighting the most active times for gun violence.
+```{r }
+# Group and summarize incidents by location
+# Group and summarize incidents by borough and time of day (hour)
+nypd_02 %>%
+  mutate(Hour = hour(OCCUR_TIME)) %>%
+  group_by(BORO, Hour) %>%
+  summarize(Incidents = n()) %>%
+  ggplot(aes(x = Hour, y = Incidents, color = BORO)) +
+  geom_line() +
+  labs(
+    title = "Shooting Incidents by Hour of Day and Borough",
+    x = "Hour of Day",
+    y = "Number of Incidents"
+  ) +
+  theme_minimal()
+
+```
+
+The chart shows that shooting incidents peak in the evening, especially in Brooklyn and The Bronx. Manhattan and Queens follow similar patterns but with fewer incidents, while Staten Island consistently has the lowest numbers.
+
+
+# Model
+With a clear understanding of the distribution of shooting incidents by borough and time of day, the next step is to predict how these factors influence the frequency of incidents. Using a linear regression model, we aim to determine how borough, time of day, age group, and gender impact the number of shooting incidents. This model will help identify key predictors and provide insights into which factors contribute most significantly to gun violence patterns in New York City.
+
+```{r model}
+# Summarize incidents by borough and other factors to get count per group
+nypd_summary <- nypd_02 %>%
+  group_by(BORO, Hour = hour(OCCUR_TIME), VIC_AGE_GROUP, VIC_SEX) %>%
+  summarize(Incidents = n(), .groups = 'drop')
+
+# Check the summarized data
+head(nypd_summary)
+
+# Create a Poisson regression model to predict the number of shooting incidents
+poisson_model <- glm(Incidents ~ BORO + Hour + VIC_AGE_GROUP + VIC_SEX, 
+                     data = nypd_summary, family = poisson)
+
+# Display the summary of the Poisson regression model
+summary(poisson_model)
+
+```
+
+What the Data Tells Us:
+
+Location: Brooklyn experiences significantly more incidents compared to other boroughs like Manhattan, Queens, and especially Staten Island, which has the fewest incidents.
+
+Time of Day: Shooting incidents tend to increase as the day progresses, with a higher likelihood later in the day.
+
+Demographics: The age group 25-44 is most associated with shooting incidents, while younger (10-24) and older (65+) groups experience fewer incidents. Male victims are involved in fewer incidents than female victims.
+
+
+Using key factors like borough, time of day, and demographics, we apply a Poisson regression model to predict the number of shooting incidents. This model helps us understand how well these variables explain the occurrence of incidents. The following visualization compares the model’s predicted values to the actual incident counts.
+```{r}
+# Get the predicted values from the Poisson regression model
+nypd_summary$Poisson_Predicted <- predict(poisson_model, type = "response")
+
+# Create a scatter plot of actual vs predicted incidents for the Poisson model
+ggplot(nypd_summary, aes(x = Poisson_Predicted, y = Incidents)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Poisson Regression: Predicted vs Actual Number of Shooting Incidents",
+    x = "Predicted Incidents",
+    y = "Actual Incidents"
+  ) +
+  theme_minimal()
+
+
+```
+
+The scatter plot compares predicted vs. actual shooting incidents. Points near the red line indicate accurate predictions. The model performs well for lower incident counts (0-30) but shows more variability and less accuracy as the number of incidents increases, suggesting room for improvement with higher counts.
+
+# Conclusion
+This analysis reveals key patterns in shooting incidents across New York City:
+
+Borough Distribution: Brooklyn and The Bronx have the highest number of shooting incidents, while Staten Island has the fewest. Efforts to reduce gun violence should focus on these higher-risk areas.
+
+Time of Day: Shootings peak in the evening, especially in Brooklyn and The Bronx, highlighting the need for increased prevention during these hours.
+
+Demographics: Individuals aged 25-44 are most affected, with fewer incidents involving younger and older groups. Female victims are slightly more frequent than male.
+
+Model Insights: The Poisson regression model shows that borough, time of day, age group, and gender are key predictors of shootings. However, it struggles with higher incident counts, suggesting room for improvement.
+
+
+# Possible bias 
+
+
+Borough Focus: Since Brooklyn has many incidents, the model might focus too much on it, making predictions for smaller boroughs like Staten Island less accurate.
+
+Missing Factors: The model doesn’t include other important factors like income level or neighborhood safety, which could affect shooting rates but aren't part of the data.
+
+Underestimating High Counts: The model may not handle very high incident numbers well, leading to predictions that underestimate areas or times with a lot of shootings.
+
+
+
